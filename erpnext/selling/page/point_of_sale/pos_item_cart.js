@@ -928,9 +928,12 @@ erpnext.PointOfSale.ItemCart = class {
 		const me = this;
 		dfs.forEach((df) => {
 			this[`customer_${df.fieldname}_field`] = frappe.ui.form.make_control({
-				df: { ...df, onchange: handle_customer_field_change },
+				df: df,
 				parent: $customer_form.find(`.${df.fieldname}-field`),
 				render_input: true,
+			});
+			this[`customer_${df.fieldname}_field`].$input?.on("blur", () => {
+				handle_customer_field_change.apply(this[`customer_${df.fieldname}_field`]);
 			});
 			this[`customer_${df.fieldname}_field`].set_value(this.customer_info[df.fieldname]);
 		});
@@ -985,8 +988,8 @@ erpnext.PointOfSale.ItemCart = class {
 					.html(`${__("Last transacted")} ${__(elapsed_time)}`);
 
 				res.forEach((invoice) => {
-					const posting_datetime = moment(invoice.posting_date + " " + invoice.posting_time).format(
-						"Do MMMM, h:mma"
+					const posting_datetime = frappe.datetime.str_to_user(
+						invoice.posting_date + " " + invoice.posting_time
 					);
 					let indicator_color = {
 						Paid: "green",
