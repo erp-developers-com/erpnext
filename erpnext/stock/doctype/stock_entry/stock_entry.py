@@ -209,6 +209,7 @@ class StockEntry(StockController):
 		self.validate_bom()
 		self.set_process_loss_qty()
 		self.validate_purchase_order()
+		self.validate_company_in_accounting_dimension()
 
 		if self.purpose in ("Manufacture", "Repack"):
 			self.mark_finished_and_scrap_items()
@@ -2417,7 +2418,7 @@ class StockEntry(StockController):
 			item_row = item_dict[d]
 
 			child_qty = flt(item_row["qty"], precision)
-			if not self.is_return and child_qty <= 0:
+			if not self.is_return and child_qty <= 0 and not item_row.get("is_scrap_item"):
 				continue
 
 			se_child = self.append("items")

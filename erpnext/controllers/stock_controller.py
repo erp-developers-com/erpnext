@@ -1234,7 +1234,7 @@ class StockController(AccountsController):
 				child_tab.item_code,
 				child_tab.qty,
 			)
-			.where(parent_tab.docstatus < 2)
+			.where(parent_tab.docstatus == 1)
 		)
 
 		if self.doctype == "Purchase Invoice":
@@ -1564,6 +1564,7 @@ def repost_required_for_queue(doc: StockController) -> bool:
 	return False
 
 
+@frappe.whitelist()
 def check_item_quality_inspection(doctype, items):
 	if isinstance(items, str):
 		items = json.loads(items)
