@@ -683,12 +683,20 @@ class BatchNoValuation(DeprecatedBatchNoValuation):
 		return query.run(as_dict=True)
 
 	def prepare_batches(self):
+		from erpnext.stock.utils import get_valuation_method
+
 		self.batches = self.batch_nos
 		if isinstance(self.batch_nos, dict):
 			self.batches = list(self.batch_nos.keys())
 
 		self.batchwise_valuation_batches = []
 		self.non_batchwise_valuation_batches = []
+
+		if get_valuation_method(self.sle.item_code) == "Moving Average" and frappe.db.get_single_value(
+			"Stock Settings", "do_not_use_batchwise_valuation"
+		):
+			self.non_batchwise_valuation_batches = self.batches
+			return
 
 		batches = frappe.get_all(
 			"Batch", filters={"name": ("in", self.batches), "use_batchwise_valuation": 1}, fields=["name"]
@@ -734,6 +742,9 @@ class BatchNoValuation(DeprecatedBatchNoValuation):
 	def get_incoming_rate(self):
 		if not self.sle.actual_qty:
 			self.sle.actual_qty = self.get_actual_qty()
+
+		if not self.sle.actual_qty:
+			return 0.0
 
 		return abs(flt(self.stock_value_change) / flt(self.sle.actual_qty))
 

@@ -165,6 +165,48 @@ class AccountsController(TransactionBase):
 						raise_exception=1,
 					)
 
+	def validate_against_voucher_outstanding(self):
+		from frappe.model.meta import get_meta
+
+		if not get_meta(self.doctype).has_field("outstanding_amount"):
+			return
+
+		if self.get("is_return") and self.return_against and not self.get("is_pos"):
+			against_voucher_outstanding = frappe.get_value(
+				self.doctype, self.return_against, "outstanding_amount"
+			)
+			document_type = "Credit Note" if self.doctype == "Sales Invoice" else "Debit Note"
+
+			msg = ""
+			if self.get("update_outstanding_for_self"):
+				msg = (
+					"We can see {0} is made against {1}. If you want {1}'s outstanding to be updated, "
+					"uncheck '{2}' checkbox. <br><br>Or"
+				).format(
+					frappe.bold(document_type),
+					get_link_to_form(self.doctype, self.get("return_against")),
+					frappe.bold(_("Update Outstanding for Self")),
+				)
+
+			elif not self.update_outstanding_for_self and (
+				abs(flt(self.rounded_total) or flt(self.grand_total)) > flt(against_voucher_outstanding)
+			):
+				self.update_outstanding_for_self = 1
+				msg = (
+					"The outstanding amount {} in {} is lesser than {}. Updating the outstanding to this invoice. <br><br>And"
+				).format(
+					against_voucher_outstanding,
+					get_link_to_form(self.doctype, self.get("return_against")),
+					flt(abs(self.outstanding_amount)),
+				)
+
+			if msg:
+				msg += " you can use {} tool to reconcile against {} later.".format(
+					get_link_to_form("Payment Reconciliation", "Payment Reconciliation"),
+					get_link_to_form(self.doctype, self.get("return_against")),
+				)
+				frappe.msgprint(_(msg))
+
 	def validate(self):
 		if not self.get("is_return") and not self.get("is_debit_note"):
 			self.validate_qty_is_not_zero()
@@ -193,6 +235,7 @@ class AccountsController(TransactionBase):
 		self.disable_tax_included_prices_for_internal_transfer()
 		self.set_incoming_rate()
 		self.init_internal_values()
+		self.validate_against_voucher_outstanding()
 
 		# Need to set taxes based on taxes_and_charges template
 		# before calculating taxes and totals
@@ -228,20 +271,6 @@ class AccountsController(TransactionBase):
 					)
 				)
 
-			if self.get("is_return") and self.get("return_against") and not self.get("is_pos"):
-				if self.get("update_outstanding_for_self"):
-					document_type = "Credit Note" if self.doctype == "Sales Invoice" else "Debit Note"
-					frappe.msgprint(
-						_(
-							"We can see {0} is made against {1}. If you want {1}'s outstanding to be updated, uncheck '{2}' checkbox. <br><br> Or you can use {3} tool to reconcile against {1} later."
-						).format(
-							frappe.bold(document_type),
-							get_link_to_form(self.doctype, self.get("return_against")),
-							frappe.bold(_("Update Outstanding for Self")),
-							get_link_to_form("Payment Reconciliation", "Payment Reconciliation"),
-						)
-					)
-
 			pos_check_field = "is_pos" if self.doctype == "Sales Invoice" else "is_paid"
 			if cint(self.allocate_advances_automatically) and not cint(self.get(pos_check_field)):
 				self.set_advances()
@@ -271,6 +300,7 @@ class AccountsController(TransactionBase):
 		self.set_total_in_words()
 		self.set_default_letter_head()
 		self.validate_company_in_accounting_dimension()
+		self.validate_party_address_and_contact()
 
 	def set_default_letter_head(self):
 		if hasattr(self, "letter_head") and not self.letter_head:
@@ -441,6 +471,46 @@ class AccountsController(TransactionBase):
 						)
 					)
 
+	def validate_party_address_and_contact(self):
+		party_type, party = self.get_party()
+
+		if not (party_type and party):
+			return
+
+		if party_type == "Customer":
+			billing_address, shipping_address = (
+				self.get("customer_address"),
+				self.get("shipping_address_name"),
+			)
+			self.validate_party_address(party, party_type, billing_address, shipping_address)
+		elif party_type == "Supplier":
+			billing_address = self.get("supplier_address")
+			self.validate_party_address(party, party_type, billing_address)
+
+		self.validate_party_contact(party, party_type)
+
+	def validate_party_address(self, party, party_type, billing_address, shipping_address=None):
+		if billing_address or shipping_address:
+			party_address = frappe.get_all(
+				"Dynamic Link",
+				{"link_doctype": party_type, "link_name": party, "parenttype": "Address"},
+				pluck="parent",
+			)
+			if billing_address and billing_address not in party_address:
+				frappe.throw(_("Billing Address does not belong to the {0}").format(party))
+			elif shipping_address and shipping_address not in party_address:
+				frappe.throw(_("Shipping Address does not belong to the {0}").format(party))
+
+	def validate_party_contact(self, party, party_type):
+		if self.get("contact_person"):
+			contact = frappe.get_all(
+				"Dynamic Link",
+				{"link_doctype": party_type, "link_name": party, "parenttype": "Contact"},
+				pluck="parent",
+			)
+			if self.contact_person and self.contact_person not in contact:
+				frappe.throw(_("Contact Person does not belong to the {0}").format(party))
+
 	def validate_return_against_account(self):
 		if self.doctype in ["Sales Invoice", "Purchase Invoice"] and self.is_return and self.return_against:
 			cr_dr_account_field = "debit_to" if self.doctype == "Sales Invoice" else "credit_to"
@@ -579,6 +649,9 @@ class AccountsController(TransactionBase):
 				self.base_paid_amount = flt(
 					self.paid_amount * self.conversion_rate, self.precision("base_paid_amount")
 				)
+			else:
+				self.paid_amount = 0
+				self.base_paid_amount = 0
 
 	def set_missing_values(self, for_validate=False):
 		if frappe.flags.in_test:
@@ -709,17 +782,10 @@ class AccountsController(TransactionBase):
 			if not self.due_date:
 				frappe.throw(_("Due Date is mandatory"))
 
-			validate_due_date(
-				posting_date,
-				self.due_date,
-				self.payment_terms_template,
-			)
+			validate_due_date(posting_date, self.due_date, None, self.payment_terms_template, self.doctype)
 		elif self.doctype == "Purchase Invoice":
 			validate_due_date(
-				posting_date,
-				self.due_date,
-				self.bill_date,
-				self.payment_terms_template,
+				posting_date, self.due_date, self.bill_date, self.payment_terms_template, self.doctype
 			)
 
 	def set_price_list_currency(self, buying_or_selling):
@@ -1189,13 +1255,18 @@ class AccountsController(TransactionBase):
 			)
 
 	def validate_qty_is_not_zero(self):
-		if self.doctype == "Purchase Receipt":
+		if self.flags.allow_zero_qty:
 			return
 
 		for item in self.items:
+			if self.doctype == "Purchase Receipt" and item.rejected_qty:
+				continue
+
 			if not flt(item.qty):
 				frappe.throw(
-					msg=_("Row #{0}: Item quantity cannot be zero").format(item.idx),
+					msg=_("Row #{0}: Quantity for Item {1} cannot be zero.").format(
+						item.idx, frappe.bold(item.item_code)
+					),
 					title=_("Invalid Quantity"),
 					exc=InvalidQtyError,
 				)
@@ -1771,8 +1842,11 @@ class AccountsController(TransactionBase):
 			and self.get("discount_amount")
 			and self.get("additional_discount_account")
 		):
-			amount = item.amount
-			base_amount = item.base_amount
+			amount += item.distributed_discount_amount
+			base_amount += flt(
+				item.distributed_discount_amount * self.get("conversion_rate"),
+				item.precision("distributed_discount_amount"),
+			)
 
 		return amount, base_amount
 
@@ -2287,7 +2361,9 @@ class AccountsController(TransactionBase):
 				and automatically_fetch_payment_terms
 				and self.linked_order_has_payment_terms(po_or_so, fieldname, doctype)
 			):
-				self.fetch_payment_terms_from_order(po_or_so, doctype)
+				self.fetch_payment_terms_from_order(
+					po_or_so, doctype, grand_total, base_grand_total, automatically_fetch_payment_terms
+				)
 				if self.get("payment_terms_template"):
 					self.ignore_default_payment_terms_template = 1
 			elif self.get("payment_terms_template"):
@@ -2323,12 +2399,16 @@ class AccountsController(TransactionBase):
 						base_grand_total * flt(d.invoice_portion) / 100, d.precision("base_payment_amount")
 					)
 					d.outstanding = d.payment_amount
+					d.base_outstanding = d.base_payment_amount
 				elif not d.invoice_portion:
 					d.base_payment_amount = flt(
 						d.payment_amount * self.get("conversion_rate"), d.precision("base_payment_amount")
 					)
+					d.base_outstanding = d.base_payment_amount
 		else:
-			self.fetch_payment_terms_from_order(po_or_so, doctype)
+			self.fetch_payment_terms_from_order(
+				po_or_so, doctype, grand_total, base_grand_total, automatically_fetch_payment_terms
+			)
 			self.ignore_default_payment_terms_template = 1
 
 	def get_order_details(self):
@@ -2366,7 +2446,9 @@ class AccountsController(TransactionBase):
 	def linked_order_has_payment_schedule(self, po_or_so):
 		return frappe.get_all("Payment Schedule", filters={"parent": po_or_so})
 
-	def fetch_payment_terms_from_order(self, po_or_so, po_or_so_doctype):
+	def fetch_payment_terms_from_order(
+		self, po_or_so, po_or_so_doctype, grand_total, base_grand_total, automatically_fetch_payment_terms
+	):
 		"""
 		Fetch Payment Terms from Purchase/Sales Order on creating a new Purchase/Sales Invoice.
 		"""
@@ -2382,11 +2464,24 @@ class AccountsController(TransactionBase):
 				"invoice_portion": schedule.invoice_portion,
 				"mode_of_payment": schedule.mode_of_payment,
 				"description": schedule.description,
-				"payment_amount": schedule.payment_amount,
-				"base_payment_amount": schedule.base_payment_amount,
-				"outstanding": schedule.outstanding,
 				"paid_amount": schedule.paid_amount,
 			}
+
+			if automatically_fetch_payment_terms:
+				payment_schedule["payment_amount"] = flt(
+					grand_total * flt(payment_schedule["invoice_portion"]) / 100,
+					schedule.precision("payment_amount"),
+				)
+				payment_schedule["base_payment_amount"] = flt(
+					base_grand_total * flt(payment_schedule["invoice_portion"]) / 100,
+					schedule.precision("base_payment_amount"),
+				)
+				payment_schedule["outstanding"] = payment_schedule["payment_amount"]
+			else:
+				payment_schedule["base_payment_amount"] = flt(
+					schedule.base_payment_amount * self.get("conversion_rate"),
+					schedule.precision("base_payment_amount"),
+				)
 
 			if schedule.discount_type == "Percentage":
 				payment_schedule["discount_type"] = schedule.discount_type
@@ -2649,12 +2744,17 @@ class AccountsController(TransactionBase):
 		default_currency = erpnext.get_company_currency(self.company)
 		if not default_currency:
 			throw(_("Please enter default currency in Company Master"))
-		if (
-			(self.currency == default_currency and flt(self.conversion_rate) != 1.00)
-			or not self.conversion_rate
-			or (self.currency != default_currency and flt(self.conversion_rate) == 1.00)
-		):
-			throw(_("Conversion rate cannot be 0 or 1"))
+
+		if not self.conversion_rate:
+			throw(_("Conversion rate cannot be 0"))
+
+		if self.currency == default_currency and flt(self.conversion_rate) != 1.00:
+			throw(_("Conversion rate must be 1.00 if document currency is same as company currency"))
+
+		if self.currency != default_currency and flt(self.conversion_rate) == 1.00:
+			frappe.msgprint(
+				_("Conversion rate is 1.00, but document currency is different from company currency")
+			)
 
 	def check_finance_books(self, item, asset):
 		if (
@@ -3497,7 +3597,7 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 	def validate_quantity(child_item, new_data):
 		if not flt(new_data.get("qty")):
 			frappe.throw(
-				_("Row # {0}: Quantity for Item {1} cannot be zero").format(
+				_("Row #{0}: Quantity for Item {1} cannot be zero.").format(
 					new_data.get("idx"), frappe.bold(new_data.get("item_code"))
 				),
 				title=_("Invalid Qty"),
@@ -3638,9 +3738,9 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 		)
 		if amount_below_billed_amt and row_rate > 0.0:
 			frappe.throw(
-				_("Row #{0}: Cannot set Rate if amount is greater than billed amount for Item {1}.").format(
-					child_item.idx, child_item.item_code
-				)
+				_(
+					"Row #{0}: Cannot set Rate if the billed amount is greater than the amount for Item {1}."
+				).format(child_item.idx, child_item.item_code)
 			)
 		else:
 			child_item.rate = row_rate
@@ -3665,6 +3765,9 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 
 		if d.get("schedule_date") and parent_doctype == "Purchase Order":
 			child_item.schedule_date = d.get("schedule_date")
+
+		if d.get("bom_no") and parent_doctype == "Sales Order":
+			child_item.bom_no = d.get("bom_no")
 
 		if flt(child_item.price_list_rate):
 			if flt(child_item.rate) > flt(child_item.price_list_rate):
