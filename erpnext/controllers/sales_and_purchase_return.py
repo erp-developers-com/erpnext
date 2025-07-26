@@ -4,7 +4,7 @@
 from collections import defaultdict
 
 import frappe
-from frappe import _
+from frappe import _, bold
 from frappe.model.meta import get_field_precision
 from frappe.utils import cint, flt, format_datetime, get_datetime
 
@@ -35,6 +35,18 @@ def validate_return_against(doc):
 		ref_doc = frappe.get_doc(doc.doctype, doc.return_against)
 
 		party_type = "customer" if doc.doctype in ("Sales Invoice", "Delivery Note") else "supplier"
+
+		if ref_doc.get(party_type) != doc.get(party_type):
+			frappe.throw(
+				_("The {0} {1} does not match with the {0} {2} in the {3} {4}").format(
+					doc.meta.get_label(party_type),
+					bold(doc.get(party_type)),
+					bold(ref_doc.get(party_type)),
+					ref_doc.doctype,
+					ref_doc.name,
+				),
+				title=_("Party Mismatch"),
+			)
 
 		if (
 			ref_doc.company == doc.company
@@ -679,6 +691,14 @@ def get_rate_for_return(
 				},
 				raise_error_if_no_rate=False,
 			)
+
+	if not rate and voucher_type in ["Sales Invoice", "Delivery Note"]:
+		details = frappe.db.get_value(
+			voucher_type + " Item", voucher_detail_no, ["rate", "allow_zero_valuation_rate"], as_dict=1
+		)
+
+		if details and not details.allow_zero_valuation_rate:
+			rate = flt(details.rate)
 
 	return rate
 

@@ -88,6 +88,7 @@ class WorkOrder(Document):
 		company: DF.Link
 		corrective_operation_cost: DF.Currency
 		description: DF.SmallText | None
+		disassembled_qty: DF.Float
 		expected_delivery_date: DF.Date | None
 		fg_warehouse: DF.Link
 		from_wip_warehouse: DF.Check
@@ -167,6 +168,31 @@ class WorkOrder(Document):
 		validate_uom_is_integer(self, "stock_uom", ["required_qty"])
 
 		self.set_required_items(reset_only_qty=len(self.get("required_items")))
+		self.validate_operations_sequence()
+
+	def validate_operations_sequence(self):
+		if all([not op.sequence_id for op in self.operations]):
+			for op in self.operations:
+				op.sequence_id = op.idx
+		else:
+			sequence_id = 1
+			for op in self.operations:
+				if op.idx == 1 and op.sequence_id != 1:
+					frappe.throw(
+						_("Row #1: Sequence ID must be 1 for Operation {0}.").format(
+							frappe.bold(op.operation)
+						)
+					)
+				elif op.sequence_id != sequence_id and op.sequence_id != sequence_id + 1:
+					frappe.throw(
+						_("Row #{0}: Sequence ID must be {1} or {2} for Operation {3}.").format(
+							op.idx,
+							frappe.bold(sequence_id),
+							frappe.bold(sequence_id + 1),
+							frappe.bold(op.operation),
+						)
+					)
+				sequence_id = op.sequence_id
 
 	def set_warehouses(self):
 		for row in self.required_items:
@@ -389,7 +415,7 @@ class WorkOrder(Document):
 			if qty > completed_qty:
 				frappe.throw(
 					_("{0} ({1}) cannot be greater than planned quantity ({2}) in Work Order {3}").format(
-						self.meta.get_label(fieldname), qty, completed_qty, self.name
+						_(self.meta.get_label(fieldname)), qty, completed_qty, self.name
 					),
 					StockOverProductionError,
 				)
@@ -405,6 +431,18 @@ class WorkOrder(Document):
 		if self.production_plan:
 			self.set_produced_qty_for_sub_assembly_item()
 			self.update_production_plan_status()
+
+	def update_disassembled_qty(self, qty, is_cancel=False):
+		if is_cancel:
+			self.disassembled_qty = max(0, self.disassembled_qty - qty)
+		else:
+			if self.docstatus == 1:
+				self.disassembled_qty += qty
+
+		if not is_cancel and self.disassembled_qty > self.produced_qty:
+			frappe.throw(_("Cannot disassemble more than produced quantity."))
+
+		self.db_set("disassembled_qty", self.disassembled_qty)
 
 	def get_transferred_or_manufactured_qty(self, purpose):
 		table = frappe.qb.DocType("Stock Entry")
@@ -624,17 +662,6 @@ class WorkOrder(Document):
 		enable_capacity_planning = not cint(manufacturing_settings_doc.disable_capacity_planning)
 		plan_days = cint(manufacturing_settings_doc.capacity_planning_for_days) or 30
 
-		if all([op.sequence_id for op in self.operations]):
-			self.operations = sorted(self.operations, key=lambda op: op.sequence_id)
-			for idx, op in enumerate(self.operations):
-				op.idx = idx + 1
-		elif any([op.sequence_id for op in self.operations]):
-			frappe.throw(
-				_(
-					"Row #{0}: Incorrect Sequence ID. If any single operation has a Sequence ID then all other operations must have one too."
-				).format(next((op.idx for op in self.operations if not op.sequence_id), None))
-			)
-
 		for idx, row in enumerate(self.operations):
 			qty = self.qty
 			while qty > 0:
@@ -762,22 +789,34 @@ class WorkOrder(Document):
 		)
 
 	def update_ordered_qty(self):
-		if self.production_plan and self.production_plan_item and not self.production_plan_sub_assembly_item:
+		if self.production_plan and (self.production_plan_item or self.production_plan_sub_assembly_item):
 			table = frappe.qb.DocType("Work Order")
 
 			query = (
 				frappe.qb.from_(table)
 				.select(Sum(table.qty))
-				.where(
-					(table.production_plan == self.production_plan)
-					& (table.production_plan_item == self.production_plan_item)
-					& (table.docstatus == 1)
-				)
-			).run()
+				.where((table.production_plan == self.production_plan) & (table.docstatus == 1))
+			)
 
+			if self.production_plan_item:
+				query = query.where(table.production_plan_item == self.production_plan_item)
+			elif self.production_plan_sub_assembly_item:
+				query = query.where(
+					table.production_plan_sub_assembly_item == self.production_plan_sub_assembly_item
+				)
+
+			query = query.run()
 			qty = flt(query[0][0]) if query else 0
 
-			frappe.db.set_value("Production Plan Item", self.production_plan_item, "ordered_qty", qty)
+			if self.production_plan_item:
+				frappe.db.set_value("Production Plan Item", self.production_plan_item, "ordered_qty", qty)
+			elif self.production_plan_sub_assembly_item:
+				frappe.db.set_value(
+					"Production Plan Sub Assembly Item",
+					self.production_plan_sub_assembly_item,
+					"ordered_qty",
+					qty,
+				)
 
 			doc = frappe.get_doc("Production Plan", self.production_plan)
 			doc.set_status()
@@ -1052,7 +1091,7 @@ class WorkOrder(Document):
 			self.transfer_material_against = "Work Order"
 		if not self.transfer_material_against:
 			frappe.throw(
-				_("Setting {} is required").format(self.meta.get_label("transfer_material_against")),
+				_("Setting {0} is required").format(_(self.meta.get_label("transfer_material_against"))),
 				title=_("Missing value"),
 			)
 
@@ -1463,7 +1502,7 @@ def make_stock_entry(work_order_id, purpose, qty=None, target_warehouse=None):
 		stock_entry.to_warehouse = target_warehouse or work_order.source_warehouse
 
 	stock_entry.set_stock_entry_type()
-	stock_entry.get_items()
+	stock_entry.get_items(qty, work_order.production_item)
 
 	if purpose != "Disassemble":
 		stock_entry.set_serial_no_batch_for_finished_good()
@@ -1503,19 +1542,21 @@ def stop_unstop(work_order, status):
 
 
 @frappe.whitelist()
-def query_sales_order(production_item):
-	out = frappe.db.sql_list(
-		"""
-		select distinct so.name from `tabSales Order` so, `tabSales Order Item` so_item
-		where so_item.parent=so.name and so_item.item_code=%s and so.docstatus=1
-	union
-		select distinct so.name from `tabSales Order` so, `tabPacked Item` pi_item
-		where pi_item.parent=so.name and pi_item.item_code=%s and so.docstatus=1
-	""",
-		(production_item, production_item),
+@frappe.validate_and_sanitize_search_inputs
+def query_sales_order(doctype, txt, searchfield, start, page_len, filters) -> list[str]:
+	return frappe.get_list(
+		"Sales Order",
+		fields=["name"],
+		filters=[
+			["Sales Order", "docstatus", "=", 1],
+		],
+		or_filters=[
+			["Sales Order Item", "item_code", "=", filters.get("production_item")],
+			["Packed Item", "item_code", "=", filters.get("production_item")],
+		],
+		as_list=True,
+		distinct=True,
 	)
-
-	return out
 
 
 @frappe.whitelist()
