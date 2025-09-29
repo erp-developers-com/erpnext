@@ -33,6 +33,7 @@ def execute(filters=None):
 				"invoice_or_item",
 				"customer",
 				"customer_group",
+				"customer_name",
 				"posting_date",
 				"item_code",
 				"item_name",
@@ -95,6 +96,7 @@ def execute(filters=None):
 			"customer": [
 				"customer",
 				"customer_group",
+				"customer_name",
 				"qty",
 				"base_rate",
 				"buying_rate",
@@ -178,7 +180,14 @@ def get_data_when_grouped_by_invoice(columns, gross_profit_data, filters, group_
 	# removing Item Code and Item Name columns
 	del columns[4:6]
 
+	total_base_amount = 0
+	total_buying_amount = 0
+
 	for src in gross_profit_data.si_list:
+		if src.indent == 1:
+			total_base_amount += src.base_amount or 0.0
+			total_buying_amount += src.buying_amount or 0.0
+
 		row = frappe._dict()
 		row.indent = src.indent
 		row.parent_invoice = src.parent_invoice
@@ -189,20 +198,64 @@ def get_data_when_grouped_by_invoice(columns, gross_profit_data, filters, group_
 
 		data.append(row)
 
+	total_gross_profit = total_base_amount - total_buying_amount
+	data.append(
+		frappe._dict(
+			{
+				"sales_invoice": "Total",
+				"qty": None,
+				"avg._selling_rate": None,
+				"valuation_rate": None,
+				"selling_amount": total_base_amount,
+				"buying_amount": total_buying_amount,
+				"gross_profit": total_gross_profit,
+				"gross_profit_%": flt(
+					(total_gross_profit / total_base_amount) * 100.0,
+					cint(frappe.db.get_default("currency_precision")) or 3,
+				)
+				if total_base_amount
+				else 0,
+			}
+		)
+	)
+
 
 def get_data_when_not_grouped_by_invoice(gross_profit_data, filters, group_wise_columns, data):
-	for src in gross_profit_data.grouped_data:
-		row = []
-		for col in group_wise_columns.get(scrub(filters.group_by)):
-			row.append(src.get(col))
+	total_base_amount = 0
+	total_buying_amount = 0
 
-		row.append(filters.currency)
+	group_columns = group_wise_columns.get(scrub(filters.group_by))
+
+	for src in gross_profit_data.grouped_data:
+		total_base_amount += src.base_amount or 0.00
+		total_buying_amount += src.buying_amount or 0.00
+
+		row = [src.get(col) for col in group_columns] + [filters.currency]
 
 		data.append(row)
+
+	total_gross_profit = total_base_amount - total_buying_amount
+	currency_precision = cint(frappe.db.get_default("currency_precision")) or 3
+	gross_profit_percent = (total_gross_profit / total_base_amount * 100.0) if total_base_amount else 0
+
+	total_row = {
+		group_columns[0]: "Total",
+		"base_amount": total_base_amount,
+		"buying_amount": total_buying_amount,
+		"gross_profit": total_gross_profit,
+		"gross_profit_percent": flt(gross_profit_percent, currency_precision),
+	}
+
+	total_row = [total_row.get(col, None) for col in [*group_columns, "currency"]]
+	data.append(total_row)
 
 
 def get_columns(group_wise_columns, filters):
 	columns = []
+
+	supplier_master_name = frappe.db.get_single_value("Buying Settings", "supp_master_name")
+	customer_master_name = frappe.db.get_single_value("Selling Settings", "cust_master_name")
+
 	column_map = frappe._dict(
 		{
 			"parent": {
@@ -348,6 +401,12 @@ def get_columns(group_wise_columns, filters):
 				"options": "Customer Group",
 				"width": 100,
 			},
+			"customer_name": {
+				"label": _("Customer Name"),
+				"fieldname": "customer_name",
+				"fieldtype": "Data",
+				"width": 150,
+			},
 			"territory": {
 				"label": _("Territory"),
 				"fieldname": "territory",
@@ -372,6 +431,10 @@ def get_columns(group_wise_columns, filters):
 	)
 
 	for col in group_wise_columns.get(scrub(filters.group_by)):
+		if col == "customer_name" and (
+			supplier_master_name == "Supplier Name" and customer_master_name == "Customer Name"
+		):
+			continue
 		columns.append(column_map.get(col))
 
 	columns.append(
@@ -393,6 +456,7 @@ def get_column_names():
 			"invoice_or_item": "sales_invoice",
 			"customer": "customer",
 			"customer_group": "customer_group",
+			"customer_name": "customer_name",
 			"posting_date": "posting_date",
 			"item_code": "item_code",
 			"item_name": "item_name",
@@ -637,6 +701,7 @@ class GrossProfitGenerator:
 				packed_item_row = row.copy()
 				packed_item_row.warehouse = packed_item.warehouse
 				packed_item_row.qty = packed_item.total_qty * -1
+				packed_item_row.serial_and_batch_bundle = packed_item.serial_and_batch_bundle
 				buying_amount += self.get_buying_amount(packed_item_row, packed_item.item_code)
 
 		return flt(buying_amount, self.currency_precision)
@@ -728,6 +793,7 @@ class GrossProfitGenerator:
 					"voucher_no": row.parent,
 					"allow_zero_valuation": True,
 					"company": self.filters.company,
+					"item_code": item_code,
 				}
 			)
 
@@ -748,12 +814,13 @@ class GrossProfitGenerator:
 			.inner_join(purchase_invoice)
 			.on(purchase_invoice.name == purchase_invoice_item.parent)
 			.select(
-				purchase_invoice.name,
 				purchase_invoice_item.base_rate / purchase_invoice_item.conversion_factor,
 			)
 			.where(purchase_invoice.docstatus == 1)
 			.where(purchase_invoice.posting_date <= self.filters.to_date)
 			.where(purchase_invoice_item.item_code == item_code)
+			.where(purchase_invoice.is_return == 0)
+			.where(purchase_invoice_item.parenttype == "Purchase Invoice")
 		)
 
 		if row.project:
@@ -855,7 +922,7 @@ class GrossProfitGenerator:
 				`tabSales Invoice Item`.parenttype, `tabSales Invoice Item`.parent,
 				`tabSales Invoice`.posting_date, `tabSales Invoice`.posting_time,
 				`tabSales Invoice`.project, `tabSales Invoice`.update_stock,
-				`tabSales Invoice`.customer, `tabSales Invoice`.customer_group,
+				`tabSales Invoice`.customer, `tabSales Invoice`.customer_group, `tabSales Invoice`.customer_name,
 				`tabSales Invoice`.territory, `tabSales Invoice Item`.item_code,
 				`tabSales Invoice`.base_net_total as "invoice_base_net_total",
 				`tabSales Invoice Item`.item_name, `tabSales Invoice Item`.description,
@@ -953,6 +1020,7 @@ class GrossProfitGenerator:
 				"update_stock": row.update_stock,
 				"customer": row.customer,
 				"customer_group": row.customer_group,
+				"customer_name": row.customer_name,
 				"item_code": None,
 				"item_name": None,
 				"description": None,
@@ -982,6 +1050,7 @@ class GrossProfitGenerator:
 				"project": row.project,
 				"customer": row.customer,
 				"customer_group": row.customer_group,
+				"customer_name": row.customer_name,
 				"item_code": item.item_code,
 				"item_name": item.item_name,
 				"description": item.description,
@@ -996,6 +1065,7 @@ class GrossProfitGenerator:
 				"is_return": row.is_return,
 				"cost_center": row.cost_center,
 				"invoice": row.parent,
+				"serial_and_batch_bundle": row.serial_and_batch_bundle,
 			}
 		)
 
@@ -1047,6 +1117,7 @@ class GrossProfitGenerator:
 				pki.rate,
 				(pki.rate * pki.qty).as_("base_amount"),
 				pki.parent_detail_docname,
+				pki.serial_and_batch_bundle,
 			)
 			.where(pki.docstatus == 1)
 		)

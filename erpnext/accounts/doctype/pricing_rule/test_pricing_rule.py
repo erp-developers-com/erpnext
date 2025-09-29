@@ -5,7 +5,7 @@
 import unittest
 
 import frappe
-from frappe.tests import IntegrationTestCase, UnitTestCase
+from frappe.tests import IntegrationTestCase
 
 from erpnext.accounts.doctype.purchase_invoice.test_purchase_invoice import make_purchase_invoice
 from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
@@ -13,15 +13,6 @@ from erpnext.controllers.sales_and_purchase_return import make_return_doc
 from erpnext.selling.doctype.sales_order.test_sales_order import make_sales_order
 from erpnext.stock.doctype.item.test_item import make_item
 from erpnext.stock.get_item_details import get_item_details
-
-
-class UnitTestPricingRule(UnitTestCase):
-	"""
-	Unit tests for PricingRule.
-	Use this class for testing individual functions and methods.
-	"""
-
-	pass
 
 
 class TestPricingRule(IntegrationTestCase):
@@ -214,6 +205,56 @@ class TestPricingRule(IntegrationTestCase):
 		)
 		details = get_item_details(args)
 		self.assertEqual(details.get("discount_percentage"), 10)
+
+	def test_unset_group_condition(self):
+		"""
+		If args are not set for group condition, then pricing rule should not be applied.
+		"""
+		from erpnext.stock.get_item_details import get_item_details
+
+		test_record = {
+			"doctype": "Pricing Rule",
+			"title": "_Test Pricing Rule",
+			"apply_on": "Item Code",
+			"items": [{"item_code": "_Test Item"}],
+			"currency": "USD",
+			"selling": 1,
+			"rate_or_discount": "Discount Percentage",
+			"rate": 0,
+			"discount_percentage": 10,
+			"applicable_for": "Territory",
+			"territory": "All Territories",
+			"company": "_Test Company",
+		}
+		frappe.get_doc(test_record.copy()).insert()
+		args = frappe._dict(
+			{
+				"item_code": "_Test Item",
+				"company": "_Test Company",
+				"price_list": "_Test Price List",
+				"currency": "_Test Currency",
+				"doctype": "Sales Order",
+				"conversion_rate": 1,
+				"price_list_currency": "_Test Currency",
+				"plc_conversion_rate": 1,
+				"order_type": "Sales",
+				"customer": "_Test Customer",
+				"name": None,
+			}
+		)
+
+		# without territory in customer
+		customer = frappe.get_doc("Customer", "_Test Customer")
+		territory = customer.territory
+
+		customer.territory = None
+		customer.save()
+
+		details = get_item_details(args)
+		self.assertEqual(details.get("discount_percentage"), 0)
+
+		customer.territory = territory
+		customer.save()
 
 	def test_pricing_rule_for_variants(self):
 		from erpnext.stock.get_item_details import get_item_details
@@ -437,6 +478,54 @@ class TestPricingRule(IntegrationTestCase):
 		so.load_from_db()
 		self.assertEqual(so.items[1].is_free_item, 1)
 		self.assertEqual(so.items[1].item_code, "_Test Item 2")
+
+	def test_dont_enforce_free_item_qty(self):
+		# this test is only for testing non-enforcement as all other tests in this file already test with enforcement
+		frappe.delete_doc_if_exists("Pricing Rule", "_Test Pricing Rule")
+		test_record = {
+			"doctype": "Pricing Rule",
+			"title": "_Test Pricing Rule",
+			"apply_on": "Item Code",
+			"currency": "USD",
+			"items": [
+				{
+					"item_code": "_Test Item",
+				}
+			],
+			"selling": 1,
+			"rate_or_discount": "Discount Percentage",
+			"rate": 0,
+			"min_qty": 0,
+			"max_qty": 7,
+			"discount_percentage": 17.5,
+			"price_or_product_discount": "Product",
+			"same_item": 0,
+			"free_item": "_Test Item 2",
+			"free_qty": 1,
+			"company": "_Test Company",
+		}
+		pricing_rule = frappe.get_doc(test_record.copy()).insert()
+
+		# With enforcement
+		so = make_sales_order(item_code="_Test Item", qty=1, do_not_submit=True)
+		self.assertEqual(so.items[1].is_free_item, 1)
+		self.assertEqual(so.items[1].item_code, "_Test Item 2")
+
+		# Test 1 : Saving a document with an item with pricing list without it's corresponding free item will cause it the free item to be refetched on save
+		so.items.pop(1)
+		so.save()
+		so.reload()
+		self.assertEqual(len(so.items), 2)
+
+		# Without enforcement
+		pricing_rule.dont_enforce_free_item_qty = 1
+		pricing_rule.save()
+
+		# Test 2 : Deleted free item will not be fetched again on save without enforcement
+		so.items.pop(1)
+		so.save()
+		so.reload()
+		self.assertEqual(len(so.items), 1)
 
 	def test_cumulative_pricing_rule(self):
 		frappe.delete_doc_if_exists("Pricing Rule", "_Test Cumulative Pricing Rule")
@@ -1461,6 +1550,7 @@ def make_pricing_rule(**args):
 			"discount_amount": args.discount_amount or 0.0,
 			"apply_multiple_pricing_rules": args.apply_multiple_pricing_rules or 0,
 			"has_priority": args.has_priority or 0,
+			"enforce_free_item_qty": args.dont_enforce_free_item_qty or 0,
 		}
 	)
 

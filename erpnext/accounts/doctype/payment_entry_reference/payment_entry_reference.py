@@ -16,6 +16,8 @@ class PaymentEntryReference(Document):
 
 		account: DF.Link | None
 		account_type: DF.Data | None
+		advance_voucher_no: DF.DynamicLink | None
+		advance_voucher_type: DF.Link | None
 		allocated_amount: DF.Float
 		bill_no: DF.Data | None
 		due_date: DF.Date | None
@@ -26,10 +28,10 @@ class PaymentEntryReference(Document):
 		parentfield: DF.Data
 		parenttype: DF.Data
 		payment_request: DF.Link | None
-		payment_request_outstanding: DF.Float
 		payment_term: DF.Link | None
 		payment_term_outstanding: DF.Float
 		payment_type: DF.Data | None
+		reconcile_effect_on: DF.Date | None
 		reference_doctype: DF.Link
 		reference_name: DF.DynamicLink
 		total_amount: DF.Float

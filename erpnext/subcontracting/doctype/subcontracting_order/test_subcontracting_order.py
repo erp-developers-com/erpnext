@@ -5,7 +5,7 @@ import copy
 from collections import defaultdict
 
 import frappe
-from frappe.tests import IntegrationTestCase, UnitTestCase
+from frappe.tests import IntegrationTestCase
 from frappe.utils import flt
 
 from erpnext.buying.doctype.purchase_order.purchase_order import get_mapped_subcontracting_order
@@ -33,27 +33,12 @@ from erpnext.subcontracting.doctype.subcontracting_order.subcontracting_order im
 )
 
 
-class UnitTestSubcontractingOrder(UnitTestCase):
-	"""
-	Unit tests for SubcontractingOrder.
-	Use this class for testing individual functions and methods.
-	"""
-
-	pass
-
-
 class TestSubcontractingOrder(IntegrationTestCase):
 	def setUp(self):
 		make_subcontracted_items()
 		make_raw_materials()
 		make_service_items()
 		make_bom_for_subcontracted_items()
-
-	def test_populate_items_table(self):
-		sco = get_subcontracting_order()
-		sco.items = None
-		sco.populate_items_table()
-		self.assertEqual(len(sco.service_items), len(sco.items))
 
 	def test_set_missing_values(self):
 		sco = get_subcontracting_order()

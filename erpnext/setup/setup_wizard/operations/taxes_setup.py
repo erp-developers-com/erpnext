@@ -214,13 +214,12 @@ def get_or_create_account(company_name, account):
 	default_root_type = "Liability"
 	root_type = account.get("root_type", default_root_type)
 
+	or_filters = {"account_name": account.get("account_name")}
+	if account.get("account_number"):
+		or_filters.update({"account_number": account.get("account_number")})
+
 	existing_accounts = frappe.get_all(
-		"Account",
-		filters={"company": company_name, "root_type": root_type},
-		or_filters={
-			"account_name": account.get("account_name"),
-			"account_number": account.get("account_number"),
-		},
+		"Account", filters={"company": company_name, "root_type": root_type}, or_filters=or_filters
 	)
 
 	if existing_accounts:
@@ -292,7 +291,7 @@ def get_or_create_tax_group(company_name, root_type):
 
 	tax_group_account.flags.ignore_links = True
 	tax_group_account.flags.ignore_validate = True
-	tax_group_account.insert(ignore_permissions=True)
+	tax_group_account.insert(ignore_permissions=True, ignore_if_duplicate=True)
 
 	tax_group_name = tax_group_account.name
 

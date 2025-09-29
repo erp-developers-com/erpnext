@@ -1,5 +1,5 @@
 <div align="center">
-    <a href="https://erpnext.com">
+    <a href="https://frappe.io/erpnext">
 	<img src="./erpnext/public/images/v16/erpnext.svg" alt="ERPNext Logo" height="80px" width="80xp"/>
     </a>
     <h2>ERPNext</h2>
@@ -7,31 +7,31 @@
         <p>Powerful, Intuitive and Open-Source ERP</p>
     </p>
 
+[![Learn on Frappe School](https://img.shields.io/badge/Frappe%20School-Learn%20ERPNext-blue?style=flat-square)](https://frappe.school)<br><br>
 [![CI](https://github.com/frappe/erpnext/actions/workflows/server-tests-mariadb.yml/badge.svg?event=schedule)](https://github.com/frappe/erpnext/actions/workflows/server-tests-mariadb.yml)
 [![docker pulls](https://img.shields.io/docker/pulls/frappe/erpnext-worker.svg)](https://hub.docker.com/r/frappe/erpnext-worker)
 
 </div>
 
 <div align="center">
-<details>
-<summary>Screenshots</summary>
-	<img src="./erpnext/public/images/v16/p_l_graph.png" alt="Profit and Loss" width="72%"/>
-	<img src="./erpnext/public/images/v16/bom_browser.jpg" alt="BOM Browser" width="72%"/>
-	<img src="./erpnext/public/images/v16/tasks.png" alt="Tasks" width="72%"/>
+	<img src="./erpnext/public/images/v16/hero_image.png"/>
 </div>
-</details>
 
 <div align="center">
-	<a href="https://erpnext-demo.frappe.cloud/app/home">Live Demo</a>
+	<a href="https://erpnext-demo.frappe.cloud/api/method/erpnext_demo.erpnext_demo.auth.login_demo">Live Demo</a>
 	-
-	<a href="https://erpnext.com">Website</a>
+	<a href="https://frappe.io/erpnext">Website</a>
 	-
-	<a href="https://docs.erpnext.com">Documentation</a>
+	<a href="https://docs.frappe.io/erpnext/">Documentation</a>
 </div>
 
-# ERPNext
+## ERPNext
 
 100% Open-Source ERP system to help you run your business.
+
+### Motivation
+
+Running a business is a complex task - handling invoices, tracking stock, managing personnel and even more ad-hoc activities. In a market where software is sold separately to manage each of these tasks, ERPNext does all of the above and more, for free.
 
 ### Key Features
 
@@ -41,7 +41,14 @@
 - **Asset Management**: From purchase to perishment, IT infrastructure to equipment. Cover every branch of your organization, all in one centralized system.
 - **Projects**: Delivery both internal and external Projects on time, budget and Profitability. Track tasks, timesheets, and issues by project.
 
-<a href="https://erpnext.com">And More</a>
+<details open>
+
+<summary>More</summary>
+	<img src="https://erpnext.com/files/v16_bom.png"/>
+	<img src="https://erpnext.com/files/v16_stock_summary.png"/>
+	<img src="https://erpnext.com/files/v16_job_card.png"/>
+	<img src="https://erpnext.com/files/v16_tasks.png"/>
+</details>
 
 ### Under the Hood
 
@@ -68,11 +75,27 @@ It takes care of installation, setup, upgrades, monitoring, maintenance and supp
 
 
 
-### Self-hosting
+### Self-Hosted
 #### Docker
 
-Use docker to deploy ERPNext in production or for development of [Frappe](https://github.com/frappe/frappe) apps. See https://github.com/frappe/frappe_docker for more details.
+Prerequisites: docker, docker-compose, git. Refer [Docker Documentation](https://docs.docker.com) for more details on Docker setup.
 
+Run following commands:
+
+```
+git clone https://github.com/frappe/frappe_docker
+cd frappe_docker
+docker compose -f pwd.yml up -d
+```
+
+After a couple of minutes, site should be accessible on your localhost port: 8080. Use below default login credentials to access the site.
+- Username: Administrator
+- Password: admin
+
+See [Frappe Docker](https://github.com/frappe/frappe_docker?tab=readme-ov-file#to-run-on-arm64-architecture-follow-this-instructions) for ARM based docker setup.
+
+
+## Development Setup
 ### Manual Install
 
 The Easy Way: our install script for bench will install all dependencies (e.g. MariaDB). See https://github.com/frappe/bench for more details.
@@ -92,26 +115,23 @@ To setup the repository locally follow the steps mentioned below:
 2. In a separate terminal window, run the following commands:
    ```
    # Create a new site
-   bench new-site erpnext.dev
-   
-   # Map your site to localhost
-   bench --site erpnext.dev add-to-hosts
+   bench new-site erpnext.localhost
    ```
-	
+
 3. Get the ERPNext app and install it
    ```
    # Get the ERPNext app
    bench get-app https://github.com/frappe/erpnext
-   
+
    # Install the app
-   bench --site erpnext.dev install-app erpnext
+   bench --site erpnext.localhost install-app erpnext
    ```
 
-4. Open the URL `http://erpnext.dev:8000/app` in your browser, you should see the app running
+4. Open the URL `http://erpnext.localhost:8000/app` in your browser, you should see the app running
 
 ## Learning and community
 
-1. [Frappe School](https://frappe.school) - Learn Frappe Framework and ERPNext from the various courses by the maintainers or from the community.
+1. [Frappe School](https://school.frappe.io) - Learn Frappe Framework and ERPNext from the various courses by the maintainers or from the community.
 2. [Official documentation](https://docs.erpnext.com/) - Extensive documentation for ERPNext.
 3. [Discussion Forum](https://discuss.erpnext.com/) - Engage with community of ERPNext users and service providers.
 4. [Telegram Group](https://erpnext_public.t.me) - Get instant help from huge community of users.
@@ -122,6 +142,7 @@ To setup the repository locally follow the steps mentioned below:
 1. [Issue Guidelines](https://github.com/frappe/erpnext/wiki/Issue-Guidelines)
 1. [Report Security Vulnerabilities](https://erpnext.com/security)
 1. [Pull Request Requirements](https://github.com/frappe/erpnext/wiki/Contribution-Guidelines)
+2. [Translations](https://crowdin.com/project/frappe)
 
 
 ## Logo and Trademark Policy

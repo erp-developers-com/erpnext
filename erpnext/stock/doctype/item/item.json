@@ -1,6 +1,5 @@
 {
  "actions": [],
- "allow_guest_to_view": 1,
  "allow_import": 1,
  "allow_rename": 1,
  "autoname": "field:item_code",
@@ -117,7 +116,15 @@
   "customer_code",
   "default_item_manufacturer",
   "default_manufacturer_part_no",
-  "total_projected_qty"
+  "total_projected_qty",
+  "lead_time_in_days_section",
+  "procurement_time",
+  "manufacturing_time",
+  "column_break_whvr",
+  "planning_buffer",
+  "cumulative_time",
+  "capacity_in_days_section",
+  "production_capacity"
  ],
  "fields": [
   {
@@ -319,7 +326,8 @@
    "fieldname": "shelf_life_in_days",
    "fieldtype": "Int",
    "label": "Shelf Life In Days",
-   "mandatory_depends_on": "eval:doc.has_batch_no && doc.has_expiry_date"
+   "mandatory_depends_on": "eval:doc.has_batch_no && doc.has_expiry_date",
+   "non_negative": 1
   },
   {
    "default": "2099-12-31",
@@ -363,7 +371,8 @@
    "depends_on": "is_stock_item",
    "fieldname": "weight_per_unit",
    "fieldtype": "Float",
-   "label": "Weight Per Unit"
+   "label": "Weight Per Unit",
+   "non_negative": 1
   },
   {
    "depends_on": "eval:doc.is_stock_item",
@@ -535,13 +544,15 @@
    "fieldname": "min_order_qty",
    "fieldtype": "Float",
    "label": "Minimum Order Qty",
+   "non_negative": 1,
    "oldfieldname": "min_order_qty",
    "oldfieldtype": "Currency"
   },
   {
    "fieldname": "safety_stock",
    "fieldtype": "Float",
-   "label": "Safety Stock"
+   "label": "Safety Stock",
+   "non_negative": 1
   },
   {
    "fieldname": "purchase_details_cb",
@@ -552,6 +563,7 @@
    "fieldname": "lead_time_days",
    "fieldtype": "Int",
    "label": "Lead Time in days",
+   "non_negative": 1,
    "oldfieldname": "lead_time_days",
    "oldfieldtype": "Int"
   },
@@ -560,6 +572,7 @@
    "fieldtype": "Float",
    "label": "Last Purchase Rate",
    "no_copy": 1,
+   "non_negative": 1,
    "oldfieldname": "last_purchase_rate",
    "oldfieldtype": "Currency",
    "read_only": 1
@@ -883,15 +896,54 @@
    "fieldname": "deferred_accounting_section",
    "fieldtype": "Section Break",
    "label": "Deferred Accounting"
+  },
+  {
+   "fieldname": "lead_time_in_days_section",
+   "fieldtype": "Section Break",
+   "label": "Lead Time (In Days)"
+  },
+  {
+   "fieldname": "procurement_time",
+   "fieldtype": "Int",
+   "label": "Procurement Time"
+  },
+  {
+   "fieldname": "planning_buffer",
+   "fieldtype": "Int",
+   "label": "Planning Buffer"
+  },
+  {
+   "fieldname": "column_break_whvr",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "manufacturing_time",
+   "fieldtype": "Int",
+   "label": "Manufacturing Time"
+  },
+  {
+   "fieldname": "cumulative_time",
+   "fieldtype": "Int",
+   "label": "Cumulative Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_in_days_section",
+   "fieldtype": "Section Break",
+   "label": "Capacity (In Days)"
+  },
+  {
+   "fieldname": "production_capacity",
+   "fieldtype": "Int",
+   "label": "Production Capacity"
   }
  ],
  "icon": "fa fa-tag",
  "idx": 2,
  "image_field": "image",
- "index_web_pages_for_search": 1,
  "links": [],
  "make_attachments_public": 1,
- "modified": "2024-04-30 13:46:39.098753",
+ "modified": "2025-08-14 23:35:56.293048",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Item",
@@ -956,6 +1008,7 @@
   }
  ],
  "quick_entry": 1,
+ "row_format": "Dynamic",
  "search_fields": "item_name,description,item_group,customer_code",
  "show_name_in_global_search": 1,
  "show_preview_popup": 1,

@@ -4,7 +4,7 @@
 
 import frappe
 from frappe import qb
-from frappe.tests import IntegrationTestCase, UnitTestCase
+from frappe.tests import IntegrationTestCase
 from frappe.utils import add_days, flt, nowdate
 
 from erpnext.accounts.doctype.account.test_account import create_account
@@ -28,15 +28,6 @@ from erpnext.setup.doctype.employee.test_employee import make_employee
 EXTRA_TEST_RECORD_DEPENDENCIES = ["Item", "Currency Exchange"]
 
 
-class UnitTestPaymentEntry(UnitTestCase):
-	"""
-	Unit tests for PaymentEntry.
-	Use this class for testing individual functions and methods.
-	"""
-
-	pass
-
-
 class TestPaymentEntry(IntegrationTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
@@ -58,8 +49,10 @@ class TestPaymentEntry(IntegrationTestCase):
 		pe.insert()
 		pe.submit()
 
+		self.assertEqual(pe.paid_to_account_type, "Cash")
+
 		expected_gle = dict(
-			(d[0], d) for d in [["Debtors - _TC", 0, 1000, so.name], ["_Test Cash - _TC", 1000.0, 0, None]]
+			(d[0], d) for d in [["Debtors - _TC", 0, 1000, pe.name], ["_Test Cash - _TC", 1000.0, 0, None]]
 		)
 
 		self.validate_gl_entries(pe.name, expected_gle)
@@ -91,7 +84,7 @@ class TestPaymentEntry(IntegrationTestCase):
 
 		expected_gle = dict(
 			(d[0], d)
-			for d in [["_Test Receivable USD - _TC", 0, 5500, so.name], [pe.paid_to, 5500.0, 0, None]]
+			for d in [["_Test Receivable USD - _TC", 0, 5500, pe.name], [pe.paid_to, 5500.0, 0, None]]
 		)
 
 		self.validate_gl_entries(pe.name, expected_gle)
@@ -290,6 +283,48 @@ class TestPaymentEntry(IntegrationTestCase):
 		self.assertEqual(pe.references[1].payment_term, "Tax Receivable")
 		self.assertEqual(si.payment_schedule[0].paid_amount, 200.0)
 		self.assertEqual(si.payment_schedule[1].paid_amount, 36.0)
+
+	def test_payment_entry_against_payment_terms_with_discount_on_pi(self):
+		pi = make_purchase_invoice(do_not_save=1)
+		create_payment_terms_template_with_discount()
+		pi.payment_terms_template = "Test Discount Template"
+
+		frappe.db.set_value("Company", pi.company, "default_discount_account", "Write Off - _TC")
+
+		pi.append(
+			"taxes",
+			{
+				"charge_type": "On Net Total",
+				"account_head": "_Test Account Service Tax - _TC",
+				"cost_center": "_Test Cost Center - _TC",
+				"description": "Service Tax",
+				"rate": 18,
+			},
+		)
+		pi.save()
+		pi.submit()
+
+		frappe.db.set_single_value("Accounts Settings", "book_tax_discount_loss", 1)
+		pe_with_tax_loss = get_payment_entry("Purchase Invoice", pi.name, bank_account="_Test Cash - _TC")
+
+		self.assertEqual(pe_with_tax_loss.references[0].payment_term, "30 Credit Days with 10% Discount")
+		self.assertEqual(pe_with_tax_loss.payment_type, "Pay")
+		self.assertEqual(pe_with_tax_loss.references[0].allocated_amount, 295.0)
+		self.assertEqual(pe_with_tax_loss.paid_amount, 265.5)
+		self.assertEqual(pe_with_tax_loss.difference_amount, 0)
+		self.assertEqual(pe_with_tax_loss.deductions[0].amount, -25.0)  # Loss on Income
+		self.assertEqual(pe_with_tax_loss.deductions[1].amount, -4.5)  # Loss on Tax
+		self.assertEqual(pe_with_tax_loss.deductions[1].account, "_Test Account Service Tax - _TC")
+
+		frappe.db.set_single_value("Accounts Settings", "book_tax_discount_loss", 0)
+		pe = get_payment_entry("Purchase Invoice", pi.name, bank_account="_Test Cash - _TC")
+
+		self.assertEqual(pe.references[0].payment_term, "30 Credit Days with 10% Discount")
+		self.assertEqual(pe.payment_type, "Pay")
+		self.assertEqual(pe.references[0].allocated_amount, 295.0)
+		self.assertEqual(pe.paid_amount, 265.5)
+		self.assertEqual(pe.deductions[0].amount, -29.5)
+		self.assertEqual(pe.difference_amount, 0)
 
 	def test_payment_entry_against_payment_terms_with_discount(self):
 		si = create_sales_invoice(do_not_save=1, qty=1, rate=200)
@@ -526,6 +561,8 @@ class TestPaymentEntry(IntegrationTestCase):
 		pe.source_exchange_rate = 50
 		pe.insert()
 		pe.submit()
+
+		self.assertEqual(pe.paid_from_account_type, "Bank")
 
 		outstanding_amount, status = frappe.db.get_value(
 			"Purchase Invoice", pi.name, ["outstanding_amount", "status"]
@@ -1519,7 +1556,7 @@ class TestPaymentEntry(IntegrationTestCase):
 			parent_account="Current Liabilities - _TC",
 			account_name="Advances Paid",
 			company=company,
-			account_type="Liability",
+			account_type="Payable",
 		)
 
 		frappe.db.set_value(

@@ -6,7 +6,8 @@
 
 
 import frappe
-from frappe.tests import IntegrationTestCase, UnitTestCase
+import frappe.model
+from frappe.tests import IntegrationTestCase
 from frappe.utils import flt, today
 
 from erpnext.controllers.accounts_controller import InvalidQtyError
@@ -18,15 +19,7 @@ from erpnext.stock.doctype.material_request.material_request import (
 	make_supplier_quotation,
 	raise_work_orders,
 )
-
-
-class UnitTestMaterialRequest(UnitTestCase):
-	"""
-	Unit tests for MaterialRequest.
-	Use this class for testing individual functions and methods.
-	"""
-
-	pass
+from erpnext.stock.doctype.warehouse.test_warehouse import create_warehouse
 
 
 class TestMaterialRequest(IntegrationTestCase):
@@ -52,6 +45,55 @@ class TestMaterialRequest(IntegrationTestCase):
 
 		self.assertEqual(po.doctype, "Purchase Order")
 		self.assertEqual(len(po.get("items")), len(mr.get("items")))
+
+	def test_make_subcontracted_purchase_order(self):
+		from erpnext.manufacturing.doctype.production_plan.test_production_plan import make_bom
+		from erpnext.stock.doctype.item.test_item import create_item, make_item
+		from erpnext.subcontracting.doctype.subcontracting_bom.test_subcontracting_bom import (
+			create_subcontracting_bom,
+		)
+
+		mr = frappe.copy_doc(self.globalTestRecords["Material Request"][0]).insert()
+		mr.material_request_type = "Subcontracting"
+		mr.submit()
+
+		frappe.db.set_value("Item", mr.items[0].item_code, "is_sub_contracted_item", 1)
+
+		raw_materials = ["Raw Material Item 1", "Raw Material Item 2"]
+		for item in raw_materials:
+			create_item(item)
+
+		frappe.new_doc("UOM").update({"uom_name": "Test UOM"}).save()
+		service_item = make_item(
+			properties={"is_stock_item": 0}, uoms=[{"uom": "Test UOM", "conversion_factor": 3}]
+		)
+
+		mr.items[0].default_bom = make_bom(item=mr.items[0].item_code, raw_materials=raw_materials)
+		mr.reload()
+
+		create_subcontracting_bom(
+			finished_good=mr.items[0].item_code,
+			service_item=service_item.name,
+			finished_good_qty=2,
+			service_item_qty=1,
+			service_item_uom="Test UOM",
+		)
+
+		po = make_purchase_order(mr.name)
+		po.supplier = "_Test Supplier"
+		po.items[0].schedule_date = today()
+		po.items.pop(1)
+
+		# Test 1 - Test if items stock qty, qty and finished good qty are calculated correctly based on provided UOMs
+		self.assertEqual(po.items[0].stock_qty, 81)
+		self.assertEqual(po.items[0].qty, 27)
+		self.assertEqual(po.items[0].fg_item_qty, 54)
+
+		po.submit()
+		mr.reload()
+
+		# Test 2 - MR items ordered qty should be updated based on PO items qty when submitted
+		self.assertEqual(mr.items[0].ordered_qty, 54)
 
 	def test_make_supplier_quotation(self):
 		mr = frappe.copy_doc(self.globalTestRecords["Material Request"][0]).insert()
@@ -79,6 +121,43 @@ class TestMaterialRequest(IntegrationTestCase):
 		self.assertEqual(se.purpose, "Material Transfer")
 		self.assertEqual(se.doctype, "Stock Entry")
 		self.assertEqual(len(se.get("items")), len(mr.get("items")))
+
+	def test_partial_make_stock_entry(self):
+		from erpnext.stock.doctype.stock_entry.stock_entry_utils import make_stock_entry as _make_stock_entry
+
+		mr = frappe.copy_doc(self.globalTestRecords["Material Request"][0]).insert()
+
+		source_wh = create_warehouse(
+			warehouse_name="_Test Source Warehouse",
+			properties={"parent_warehouse": "All Warehouses - _TC"},
+			company="_Test Company",
+		)
+
+		mr = frappe.get_doc("Material Request", mr.name)
+		mr.material_request_type = "Material Transfer"
+
+		for row in mr.items:
+			_make_stock_entry(
+				item_code=row.item_code,
+				qty=10,
+				to_warehouse=source_wh,
+				company="_Test Company",
+				rate=100,
+			)
+
+			row.from_warehouse = source_wh
+			row.qty = 10
+
+		mr.save()
+		mr.submit()
+
+		se = make_stock_entry(mr.name)
+		se.get("items")[0].qty = 5
+		se.insert()
+		se.submit()
+
+		mr.reload()
+		self.assertEqual(mr.status, "Partially Received")
 
 	def test_in_transit_make_stock_entry(self):
 		mr = frappe.copy_doc(self.globalTestRecords["Material Request"][0]).insert()
@@ -632,7 +711,7 @@ class TestMaterialRequest(IntegrationTestCase):
 		mr = frappe.copy_doc(self.globalTestRecords["Material Request"][0])
 		mr.material_request_type = "Material Issue"
 		mr.submit()
-		frappe.db.value_cache = {}
+		frappe.db.value_cache.clear()
 
 		# testing bin value after material request is submitted
 		self.assertEqual(_get_requested_qty(), existing_requested_qty - 54.0)
@@ -836,6 +915,23 @@ class TestMaterialRequest(IntegrationTestCase):
 
 		for perm in permissions:
 			perm.delete()
+
+	def test_manufacture_type_status_over_wo(self):
+		from erpnext.stock.doctype.material_request.material_request import raise_work_orders
+
+		mr = make_material_request(
+			item_code="_Test FG Item", material_request_type="Manufacture", do_not_submit=False
+		)
+
+		work_order = raise_work_orders(mr.name)
+		wo = frappe.get_doc("Work Order", work_order[0])
+		wo.wip_warehouse = "_Test Warehouse 1 - _TC"
+		wo.submit()
+
+		mr.reload()
+
+		self.assertEqual(mr.per_ordered, 100)
+		self.assertEqual(mr.status, "Ordered")
 
 
 def get_in_transit_warehouse(company):

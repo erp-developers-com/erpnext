@@ -7,7 +7,7 @@
 
 import frappe
 from frappe import _dict
-from frappe.tests import IntegrationTestCase, UnitTestCase
+from frappe.tests import IntegrationTestCase
 
 from erpnext.stock.doctype.delivery_note.test_delivery_note import create_delivery_note
 from erpnext.stock.doctype.item.test_item import make_item
@@ -22,15 +22,6 @@ from erpnext.stock.doctype.stock_entry.test_stock_entry import make_serialized_i
 from erpnext.stock.doctype.warehouse.test_warehouse import create_warehouse
 
 EXTRA_TEST_RECORD_DEPENDENCIES = ["Item"]
-
-
-class UnitTestSerialNo(UnitTestCase):
-	"""
-	Unit tests for SerialNo.
-	Use this class for testing individual functions and methods.
-	"""
-
-	pass
 
 
 class TestSerialNo(IntegrationTestCase):
@@ -127,6 +118,7 @@ class TestSerialNo(IntegrationTestCase):
 			serial_no=[serial_nos[0]],
 			company="_Test Company 1",
 			warehouse=wh,
+			cost_center="_Test Company 1 - _TC1",
 		)
 		sn_doc.reload()
 
@@ -162,6 +154,7 @@ class TestSerialNo(IntegrationTestCase):
 			serial_no=[serial_nos[0]],
 			company="_Test Company 1",
 			warehouse=wh,
+			cost_center="_Test Company 1 - _TC1",
 		)
 
 		# Delivery from second company
@@ -171,6 +164,7 @@ class TestSerialNo(IntegrationTestCase):
 			serial_no=[serial_nos[0]],
 			company="_Test Company 1",
 			warehouse=wh,
+			cost_center="_Test Company 1 - _TC1",
 		)
 		sn_doc.reload()
 
